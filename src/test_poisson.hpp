@@ -10,11 +10,6 @@
 ///
 
 // external headers
-#include "AMReX_Geometry.H"
-#include "AMReX_LO_BCTYPES.H"
-#include "AMReX_MLMG.H"
-#include "AMReX_MLPoisson.H"
-#include "AMReX_MultiFab.H"
 #include <AMReX.H>
 
 // internal headers

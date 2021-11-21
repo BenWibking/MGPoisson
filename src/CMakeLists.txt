@@ -1,7 +1,7 @@
 include_directories(${amrex_INCLUDE_DIRS_RET})
 link_libraries(AMReX::amrex)
 
-add_executable(test_poisson main.cpp test_poisson.cpp)
+add_executable(test_poisson main.cpp test_poisson.cpp face_box.cpp)
 
 if(AMReX_GPU_BACKEND MATCHES "CUDA")
     setup_target_for_cuda_compilation(test_poisson)

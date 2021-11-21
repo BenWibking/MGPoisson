@@ -7,15 +7,17 @@
 /// \brief Defines a test problem for a cell-centered Poisson solve.
 ///
 
+#include <AMReX.H>
+#include "AMReX_Geometry.H"
+#include "AMReX_MLMG.H"
+#include "AMReX_MLPoisson.H"
+#include "AMReX_MultiFab.H"
 #include "AMReX_Array.H"
-#include "AMReX_Config.H"
 #include "AMReX_FArrayBox.H"
-#include "AMReX_INT.H"
 #include "AMReX_IntVect.H"
-#include "AMReX_Orientation.H"
 
+#include "face_box.hpp"
 #include "test_poisson.hpp"
-#include "fill_boundary.hpp"
 
 auto problem_main() -> int
 {
@@ -69,7 +71,7 @@ auto problem_main() -> int
 	// create MLMG object
 	amrex::MLMG mlmg(poissoneq);
 	mlmg.setVerbose(1);
-	mlmg.setBottomVerbose(1);
+	mlmg.setBottomVerbose(0);
 	mlmg.setBottomSolver(amrex::MLMG::BottomSolver::bicgstab);
 	mlmg.setMaxFmgIter(0); // only helps if problem is very smooth
 
@@ -80,6 +82,9 @@ auto problem_main() -> int
 	amrex::Vector<amrex::MultiFab const *> rhs_levels(nlev);
 	phi_levels[0] = &phi;
 	rhs_levels[0] = &rhs;
+
+	// get boundary faceBoxes
+	auto faceBoxes = getFaceBoxes(geom, phi);
 
 	// set initial guess for phi
 	phi.setVal(0);
@@ -103,10 +108,12 @@ auto problem_main() -> int
 	}
 
 	// set boundary values (see above for definition)
-	fillBoundaryCells(geom, phi,
-			  [=] AMREX_GPU_DEVICE(amrex::Orientation const & /*o*/,
-					       amrex::Array4<amrex::Real> const &arr, int i, int j,
-					       int k) { arr(i, j, k) = 0; });
+	for (int n = 0; n < faceBoxes.size(); ++n) {
+		auto& [arr, facebox, orientation] = faceBoxes[n];
+		amrex::ParallelFor(facebox, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+			arr(i, j, k) = 0;
+		});
+	}
 
 	// multigrid solution residual tolerances
 	const amrex::Real reltol = 1.0e-13; // doesn't work below ~1e-13...
@@ -125,27 +132,28 @@ auto problem_main() -> int
 	// Step 2. Compute surface charge (4 \pi \sigma).
 	// 	(This is saved in the ghost cells of 'phi'.)
 
-	fillBoundaryCells(geom, phi,
-			  [=] AMREX_GPU_DEVICE(amrex::Orientation const &o,
-					       amrex::Array4<amrex::Real> const &arr, int i, int j,
-					       int k) {
-				  amrex::GpuArray<int, 3> bdry{};
-				  if (o.isLow()) {
-					  bdry = domain.loVect3d();
-				  } else {
-					  bdry = domain.hiVect3d();
-				  }
+	for (int n = 0; n < faceBoxes.size(); ++n) {
+		auto& [arr, facebox, o] = faceBoxes[n];
 
-				  // Eq. 33 of Moon et al. See also Figure 1.
-				  if (o.coordDir() == 0) { // x-face
-					  arr(i, j, k) = arr(bdry[0], j, k) /
-							 (dx[0] * dx[0]); // == 4piG*rho(i,j,k)
-				  } else if (o.coordDir() == 1) {	  // y-face
-					  arr(i, j, k) = arr(i, bdry[1], k) / (dx[1] * dx[1]);
-				  } else if (o.coordDir() == 2) { // z-face
-					  arr(i, j, k) = arr(i, j, bdry[2]) / (dx[2] * dx[2]);
-				  }
-			  });
+		amrex::ParallelFor(facebox, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+			amrex::GpuArray<int, 3> bdry{};
+			if (o.isLow()) {
+				bdry = domain.loVect3d();
+			} else {
+				bdry = domain.hiVect3d();
+			}
+
+			// Eq. 33 of Moon et al. See also Figure 1.
+			// 	[== 4piG*rho(i,j,k)]
+			if (o.coordDir() == 0) { 		// x-face
+				arr(i, j, k) = arr(bdry[0], j, k) / (dx[0] * dx[0]); 
+			} else if (o.coordDir() == 1) {	// y-face
+				arr(i, j, k) = arr(i, bdry[1], k) / (dx[1] * dx[1]);
+			} else if (o.coordDir() == 2) { // z-face
+				arr(i, j, k) = arr(i, j, bdry[2]) / (dx[2] * dx[2]);
+			}
+		});
+	}
 
 	// Step 2b. Compute multipoles of surface charge on exterior faces of boxes.
 
