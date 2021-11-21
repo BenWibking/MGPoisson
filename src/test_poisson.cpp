@@ -7,14 +7,14 @@
 /// \brief Defines a test problem for a cell-centered Poisson solve.
 ///
 
-#include <AMReX.H>
+#include "AMReX_Array.H"
+#include "AMReX_FArrayBox.H"
 #include "AMReX_Geometry.H"
+#include "AMReX_IntVect.H"
 #include "AMReX_MLMG.H"
 #include "AMReX_MLPoisson.H"
 #include "AMReX_MultiFab.H"
-#include "AMReX_Array.H"
-#include "AMReX_FArrayBox.H"
-#include "AMReX_IntVect.H"
+#include <AMReX.H>
 
 #include "face_box.hpp"
 #include "test_poisson.hpp"
@@ -109,7 +109,7 @@ auto problem_main() -> int
 
 	// set boundary values (see above for definition)
 	for (int n = 0; n < faceBoxes.size(); ++n) {
-		auto& [arr, facebox, orientation] = faceBoxes[n];
+		auto &[arr, facebox, orientation] = faceBoxes[n];
 		amrex::ParallelFor(facebox, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
 			arr(i, j, k) = 0;
 		});
@@ -133,7 +133,7 @@ auto problem_main() -> int
 	// 	(This is saved in the ghost cells of 'phi'.)
 
 	for (int n = 0; n < faceBoxes.size(); ++n) {
-		auto& [arr, facebox, o] = faceBoxes[n];
+		auto &[arr, facebox, o] = faceBoxes[n];
 
 		amrex::ParallelFor(facebox, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
 			amrex::GpuArray<int, 3> bdry{};
@@ -145,9 +145,9 @@ auto problem_main() -> int
 
 			// Eq. 33 of Moon et al. See also Figure 1.
 			// 	[== 4piG*rho(i,j,k)]
-			if (o.coordDir() == 0) { 		// x-face
-				arr(i, j, k) = arr(bdry[0], j, k) / (dx[0] * dx[0]); 
-			} else if (o.coordDir() == 1) {	// y-face
+			if (o.coordDir() == 0) { // x-face
+				arr(i, j, k) = arr(bdry[0], j, k) / (dx[0] * dx[0]);
+			} else if (o.coordDir() == 1) { // y-face
 				arr(i, j, k) = arr(i, bdry[1], k) / (dx[1] * dx[1]);
 			} else if (o.coordDir() == 2) { // z-face
 				arr(i, j, k) = arr(i, j, bdry[2]) / (dx[2] * dx[2]);
@@ -155,18 +155,21 @@ auto problem_main() -> int
 		});
 	}
 
-	// Step 2b. Compute multipoles of surface charge on exterior faces of boxes.
+	// Step 2b. Compute Cartesian multipoles of surface charge for M local faceBoxes.
 
-	// Step 3. Compute the potential due to the surface charges using the DGF, summing over
-	// multipoles.
-	// (Burkhart [1997] gives an asymptotic expansion of the DGF in (1/r)^n, up to n=5.
+	// Step 2c. All-to-all broadcast multipoles. Now each process has all N faceBoxes.
+
+	// Step 3. Compute the potential at each cell in M local faceBoxes, using multipoles of all
+	// N faceBoxes. This step has unavoidable complexity O(M*N).
+
+	// (N.B. Burkhart [1997] gives an asymptotic expansion of the DGF in (1/r)^n, up to n=5.
 	// Alternatively, one can place a unit charge in the center of the box, apply Burkhart's
 	// expansion to compute the Dirichlet boundary conditions, and solve numerically for the DGF
 	// with multigrid. This can be done with a small box, e.g. 32^3, since the expansion
 	// rapidly converges as r >> dx.)
 
 	// Step 4. Solve for the potential with Dirichlet boundary conditions given by
-	// the surface charge-induced potential.
+	// the potential computed in step 3.
 
 	return 0;
 }
