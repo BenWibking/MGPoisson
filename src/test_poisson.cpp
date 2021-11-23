@@ -17,6 +17,7 @@
 #include <AMReX.H>
 
 #include "face_box.hpp"
+#include "multipole.hpp"
 #include "test_poisson.hpp"
 
 auto problem_main() -> int
@@ -157,7 +158,7 @@ auto problem_main() -> int
 
 	// Step 2b. Compute Cartesian multipoles of surface charge for M local faceBoxes.
 
-	// Step 2c. All-to-all broadcast multipoles. Now each process has all N faceBoxes.
+	// Step 2c. MPI_Allgather multipoles. Now each process has multipoles for all N faceBoxes.
 
 	// Step 3. Compute the potential at each cell in M local faceBoxes, using multipoles of all
 	// N faceBoxes. This step has unavoidable complexity O(M*N).
