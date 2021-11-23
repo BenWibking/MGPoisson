@@ -110,10 +110,12 @@ auto problem_main() -> int
 
 	// set boundary values (see above for definition)
 	for (int n = 0; n < faceBoxes.size(); ++n) {
+		// [N.B. Clang 13 does not allow capture of structured bindings...]
 		auto &[arr, facebox, orientation] = faceBoxes[n];
-		amrex::ParallelFor(facebox, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
-			arr(i, j, k) = 0;
-		});
+		amrex::ParallelFor(facebox,
+				   [=, arr = arr] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+					   arr(i, j, k) = 0;
+				   });
 	}
 
 	// multigrid solution residual tolerances
@@ -136,24 +138,25 @@ auto problem_main() -> int
 	for (int n = 0; n < faceBoxes.size(); ++n) {
 		auto &[arr, facebox, o] = faceBoxes[n];
 
-		amrex::ParallelFor(facebox, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
-			amrex::GpuArray<int, 3> bdry{};
-			if (o.isLow()) {
-				bdry = domain.loVect3d();
-			} else {
-				bdry = domain.hiVect3d();
-			}
+		amrex::ParallelFor(
+		    facebox, [=, arr = arr, o = o] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+			    amrex::GpuArray<int, 3> bdry{};
+			    if (o.isLow()) {
+				    bdry = domain.loVect3d();
+			    } else {
+				    bdry = domain.hiVect3d();
+			    }
 
-			// Eq. 33 of Moon et al. See also Figure 1.
-			// 	[== 4piG*rho(i,j,k)]
-			if (o.coordDir() == 0) { // x-face
-				arr(i, j, k) = arr(bdry[0], j, k) / (dx[0] * dx[0]);
-			} else if (o.coordDir() == 1) { // y-face
-				arr(i, j, k) = arr(i, bdry[1], k) / (dx[1] * dx[1]);
-			} else if (o.coordDir() == 2) { // z-face
-				arr(i, j, k) = arr(i, j, bdry[2]) / (dx[2] * dx[2]);
-			}
-		});
+			    // Eq. 33 of Moon et al. See also Figure 1.
+			    // 	[== 4piG*rho(i,j,k)]
+			    if (o.coordDir() == 0) { // x-face
+				    arr(i, j, k) = arr(bdry[0], j, k) / (dx[0] * dx[0]);
+			    } else if (o.coordDir() == 1) { // y-face
+				    arr(i, j, k) = arr(i, bdry[1], k) / (dx[1] * dx[1]);
+			    } else if (o.coordDir() == 2) { // z-face
+				    arr(i, j, k) = arr(i, j, bdry[2]) / (dx[2] * dx[2]);
+			    }
+		    });
 	}
 
 	// Step 2b. Compute Cartesian multipoles of surface charge for M local faceBoxes.
