@@ -8,14 +8,20 @@
 ///
 
 #include "AMReX_Array.H"
+#include "AMReX_Config.H"
+#include "AMReX_Extension.H"
 #include "AMReX_FArrayBox.H"
 #include "AMReX_Geometry.H"
 #include "AMReX_IntVect.H"
+#include "AMReX_Loop.H"
 #include "AMReX_MLMG.H"
 #include "AMReX_MLPoisson.H"
 #include "AMReX_MultiFab.H"
 #include <AMReX.H>
+#include <type_traits>
 
+#include "AMReX_REAL.H"
+#include "AMReX_SPACE.H"
 #include "face_box.hpp"
 #include "multipole.hpp"
 #include "test_poisson.hpp"
@@ -30,8 +36,8 @@ auto problem_main() -> int
 	// charge-induced potential.
 
 	// initialize geometry
-	const int n_cell = 128;
-	const int max_grid_size = 128;
+	const int n_cell = 16;
+	const int max_grid_size = 8;
 	const double Lx = 1.0;
 	const double FourPiG = 1.0;
 	const int ncomp = 1;  // number of components  [should always be 1]
@@ -90,21 +96,32 @@ auto problem_main() -> int
 	// set initial guess for phi
 	phi.setVal(0);
 
-	// set density field to a Fourier mode of the box
-	// (N.B. when periodic, very slow convergence when kx=ky=1...)
-	const int kx = 1;
-	const int ky = 1;
+	// set density field
+	amrex::Real const R_sphere = 0.5;
+	amrex::Real const rho_sphere = 1.0 / ((4. / 3.) * M_PI * std::pow(R_sphere, 3));
 
 	auto prob_lo = geom.ProbLoArray();
+	auto prob_hi = geom.ProbHiArray();
 	auto dx = geom.CellSizeArray();
 	for (amrex::MFIter mfi(rhs); mfi.isValid(); ++mfi) {
 		const amrex::Box &box = mfi.validbox();
 		auto rho = rhs.array(mfi);
+		amrex::Real x0 = 0.5 * (prob_hi[0] + prob_lo[0]);
+		amrex::Real y0 = 0.5 * (prob_hi[1] + prob_lo[1]);
+		amrex::Real z0 = 0.5 * (prob_hi[2] + prob_lo[2]);
 		amrex::ParallelFor(box, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
 			amrex::Real const x = prob_lo[0] + (i + amrex::Real(0.5)) * dx[0];
 			amrex::Real const y = prob_lo[1] + (j + amrex::Real(0.5)) * dx[1];
-			rho(i, j, k) =
-			    FourPiG * std::sin(2.0 * M_PI * kx * x) * std::sin(2.0 * M_PI * ky * y);
+			amrex::Real const z = prob_lo[2] + (k + amrex::Real(0.5)) * dx[2];
+			amrex::Real const r =
+			    std::pow(x - x0, 2) + std::pow(y - y0, 2) + std::pow(z - z0, 2);
+
+			// TODO(benwibking): integrate over cell volume
+			if (r <= R_sphere) {
+				rho(i, j, k) = FourPiG * rho_sphere * (dx[0] * dx[1] * dx[2]);
+			} else {
+				rho(i, j, k) = 0;
+			}
 		});
 	}
 
@@ -119,7 +136,7 @@ auto problem_main() -> int
 	}
 
 	// multigrid solution residual tolerances
-	const amrex::Real reltol = 1.0e-13; // doesn't work below ~1e-13...
+	const amrex::Real reltol = 1.0e-12; // doesn't work below ~1e-13...
 	const amrex::Real abstol = 0;	    // unused if zero
 
 	/// begin free-space solver
@@ -161,19 +178,136 @@ auto problem_main() -> int
 
 	// Step 2b. Compute Cartesian multipoles of surface charge for M local faceBoxes.
 
+	std::vector<Multipole> multipoles(faceBoxes.size());
+	for (int n = 0; n < faceBoxes.size(); ++n) {
+		auto &[arr, facebox, o] = faceBoxes[n];
+		Multipole &mp = multipoles[n];
+		auto dx = geom.CellSizeArray();
+		auto prob_lo = geom.ProbLoArray();
+		auto lo = facebox.loVect3d();
+		auto hi = facebox.hiVect3d();
+		amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> face_lo = {
+		    AMREX_D_DECL(lo[0] * dx[0], lo[1] * dx[1], lo[2] * dx[2])};
+
+		amrex::Real x0 =
+		    face_lo[0] + amrex::Real(0.5) * dx[0] * (hi[0] - lo[0] + amrex::Real(1));
+		amrex::Real y0 =
+		    face_lo[1] + amrex::Real(0.5) * dx[1] * (hi[1] - lo[1] + amrex::Real(1));
+		amrex::Real z0 =
+		    face_lo[2] + amrex::Real(0.5) * dx[2] * (hi[2] - lo[2] + amrex::Real(1));
+
+		amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> r0 = {AMREX_D_DECL(x0, y0, z0)};
+		for (int l = 0; l < AMREX_SPACEDIM; ++l) {
+			mp.r0[l] = r0[l];
+		}
+
+		amrex::Loop(
+		    facebox, [=, arr = arr, &mp] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+			    amrex::Real const x = prob_lo[0] + (i + amrex::Real(0.5)) * dx[0];
+			    amrex::Real const y = prob_lo[1] + (j + amrex::Real(0.5)) * dx[1];
+			    amrex::Real const z = prob_lo[2] + (k + amrex::Real(0.5)) * dx[2];
+
+			    amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> r = {
+				AMREX_D_DECL(x - x0, y - y0, z - z0)};
+
+			    // monopole
+			    mp.q0 += arr(i, j, k); // monopole
+
+			    // dipole
+			    for (int l = 0; l < AMREX_SPACEDIM; ++l) {
+				    mp.q1[l] += arr(i, j, k) * r[l];
+			    }
+
+			    // quadrupole
+			    for (int l = 0; l < AMREX_SPACEDIM; ++l) {
+				    for (int m = 0; m < AMREX_SPACEDIM; ++m) {
+					    mp.q2[l][m] += arr(i, j, k) * r[l] * r[m];
+				    }
+			    }
+		    });
+	}
+
 	// Step 2c. MPI_Allgather multipoles. Now each process has multipoles for all N faceBoxes.
+
+	static_assert(std::is_trivially_copyable<Multipole>::value);
+	std::vector<Multipole> all_mp(multipoles);
 
 	// Step 3. Compute the potential at each cell in M local faceBoxes, using multipoles of all
 	// N faceBoxes. This step has unavoidable complexity O(M*N).
 
-	// (N.B. Burkhart [1997] gives an asymptotic expansion of the DGF in (1/r)^n, up to n=5.
-	// Alternatively, one can place a unit charge in the center of the box, apply Burkhart's
-	// expansion to compute the Dirichlet boundary conditions, and solve numerically for the DGF
-	// with multigrid. This can be done with a small box, e.g. 32^3, since the expansion
-	// rapidly converges as r >> dx.)
+	//#if 0
+	amrex::Print() << "x0 y0 z0 mass dipole_x dipole_y\n";
+	for (auto &mp : all_mp) {
+		amrex::Print() << mp.r0[0] << "\t" << mp.r0[1] << "\t" << mp.r0[2] << "\t";
+		amrex::Print() << mp.q0 << "\t";
+		amrex::Print() << mp.q1[0] << "\t" << mp.q1[1] << "\t" << mp.q1[2] << "\n";
+	}
+	//#endif
+
+	// loop over local faceboxes
+	for (int n = 0; n < faceBoxes.size(); ++n) {
+		auto &[arr, facebox, o] = faceBoxes[n];
+		auto dx = geom.CellSizeArray();
+		auto prob_lo = geom.ProbLoArray();
+
+		amrex::ParallelFor(facebox,
+				   [=, arr = arr] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+					   arr(i, j, k) = 0;
+				   });
+
+		// loop over all multipoles
+		for (auto &mp : all_mp) {
+			// multipole expansion is about mp.r0
+			amrex::Real x0 = mp.r0[0];
+			amrex::Real y0 = mp.r0[1];
+			amrex::Real z0 = mp.r0[2];
+
+			amrex::ParallelFor(facebox, [=, arr = arr] AMREX_GPU_DEVICE(
+							int i, int j, int k) noexcept {
+				// compute cell coordinates
+				amrex::Real const x = prob_lo[0] + (i + amrex::Real(0.5)) * dx[0];
+				amrex::Real const y = prob_lo[1] + (j + amrex::Real(0.5)) * dx[1];
+				amrex::Real const z = prob_lo[2] + (k + amrex::Real(0.5)) * dx[2];
+				amrex::Real r = std::sqrt(AMREX_D_TERM((x - x0) * (x - x0),
+								       +(y - y0) * (y - y0),
+								       +(z - z0) * (z - z0)));
+
+				// evaluate DGF convolved with each multipole term
+				// (N.B. Burkhart [1997] gives an asymptotic expansion of the
+				// DGF in (1/r)^n, up to n=5.)
+				amrex::Real const u = x / r;
+				amrex::Real const v = y / r;
+				amrex::Real const w = z / r;
+
+				auto U = [=] AMREX_GPU_DEVICE(int i, int j) {
+					amrex::Real Ux = std::pow(dx[0], i) * std::pow(u, j);
+					amrex::Real Uy = std::pow(dx[1], i) * std::pow(v, j);
+					amrex::Real Uz = std::pow(dx[2], i) * std::pow(w, j);
+					return Ux + Uy + Uz;
+				};
+
+				amrex::Real K = FourPiG;
+				amrex::Real eta3 =
+				    (1. / 8.) * (U(2, 0) - 6 * U(2, 2) + 5 * U(2, 4));
+				amrex::Real V = (dx[0] * dx[1] * dx[2]);
+				amrex::Real dx2 = (dx[0] * dx[0] + dx[1] * dx[1] + dx[2] * dx[2]);
+
+				if (r == 0.) {
+					arr(i, j, k) += K * mp.q0 * (dx2 / V);
+				} else {
+					arr(i, j, k) += K * mp.q0 * (1.0 / r);
+					arr(i, j, k) += K * mp.q0 * (eta3 / (r * r * r));
+				}
+			});
+		}
+	}
+	amrex::Print() << std::endl;
 
 	// Step 4. Solve for the potential with Dirichlet boundary conditions given by
 	// the potential computed in step 3.
+	poissoneq.setLevelBC(0, &phi);
+	amrex::Real final_resid = mlmg.solve(phi_levels, rhs_levels, reltol, abstol);
+	amrex::Print() << "[Final solve] residual max norm = " << final_resid << "\n\n";
 
 	return 0;
 }

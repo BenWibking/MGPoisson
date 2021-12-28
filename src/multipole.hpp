@@ -7,9 +7,11 @@
 class Multipole
 {
       public:
-	amrex::Real q0 = 0;
-	amrex::Real q1[AMREX_SPACEDIM] = {};
-	amrex::Real q2[AMREX_SPACEDIM][AMREX_SPACEDIM] = {};
+	amrex::Real r0[AMREX_SPACEDIM]{};    // center of expansion
+    
+	amrex::Real q0{};				                    // monopole
+	amrex::Real q1[AMREX_SPACEDIM]{};		            // dipole
+	amrex::Real q2[AMREX_SPACEDIM][AMREX_SPACEDIM]{};   // quadrupole
 };
 
 #endif // MULTIPOLE_HPP_
