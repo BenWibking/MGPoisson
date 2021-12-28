@@ -26,6 +26,8 @@
 #include "multipole.hpp"
 #include "test_poisson.hpp"
 
+using Real = amrex::Real;
+
 auto problem_main() -> int
 {
 	// Solve the Poisson equation with free-space boundary conditions using the method of James
@@ -46,8 +48,8 @@ auto problem_main() -> int
 
 	amrex::Box domain(amrex::IntVect{AMREX_D_DECL(0, 0, 0)},
 			  amrex::IntVect{AMREX_D_DECL(n_cell - 1, n_cell - 1, n_cell - 1)});
-	amrex::RealBox boxSize{{AMREX_D_DECL(amrex::Real(0.0), amrex::Real(0.0), amrex::Real(0.0))},
-			       {AMREX_D_DECL(amrex::Real(Lx), amrex::Real(Lx), amrex::Real(Lx))}};
+	amrex::RealBox boxSize{{AMREX_D_DECL(Real(0.0), Real(0.0), Real(0.0))},
+			       {AMREX_D_DECL(Real(Lx), Real(Lx), Real(Lx))}};
 
 	// set boundary condition type (Dirichlet)
 	amrex::Array<int, AMREX_SPACEDIM> is_periodic{AMREX_D_DECL(0, 0, 0)};
@@ -97,8 +99,8 @@ auto problem_main() -> int
 	phi.setVal(0);
 
 	// set density field
-	amrex::Real const R_sphere = 0.5;
-	amrex::Real const rho_sphere = 1.0 / ((4. / 3.) * M_PI * std::pow(R_sphere, 3));
+	Real const R_sphere = 0.5;
+	Real const rho_sphere = 1.0 / ((4. / 3.) * M_PI * std::pow(R_sphere, 3));
 
 	auto prob_lo = geom.ProbLoArray();
 	auto prob_hi = geom.ProbHiArray();
@@ -106,14 +108,14 @@ auto problem_main() -> int
 	for (amrex::MFIter mfi(rhs); mfi.isValid(); ++mfi) {
 		const amrex::Box &box = mfi.validbox();
 		auto rho = rhs.array(mfi);
-		amrex::Real x0 = 0.5 * (prob_hi[0] + prob_lo[0]);
-		amrex::Real y0 = 0.5 * (prob_hi[1] + prob_lo[1]);
-		amrex::Real z0 = 0.5 * (prob_hi[2] + prob_lo[2]);
+		Real x0 = 0.5 * (prob_hi[0] + prob_lo[0]);
+		Real y0 = 0.5 * (prob_hi[1] + prob_lo[1]);
+		Real z0 = 0.5 * (prob_hi[2] + prob_lo[2]);
 		amrex::ParallelFor(box, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
-			amrex::Real const x = prob_lo[0] + (i + amrex::Real(0.5)) * dx[0];
-			amrex::Real const y = prob_lo[1] + (j + amrex::Real(0.5)) * dx[1];
-			amrex::Real const z = prob_lo[2] + (k + amrex::Real(0.5)) * dx[2];
-			amrex::Real const r =
+			Real const x = prob_lo[0] + (i + Real(0.5)) * dx[0];
+			Real const y = prob_lo[1] + (j + Real(0.5)) * dx[1];
+			Real const z = prob_lo[2] + (k + Real(0.5)) * dx[2];
+			Real const r =
 			    std::pow(x - x0, 2) + std::pow(y - y0, 2) + std::pow(z - z0, 2);
 
 			// TODO(benwibking): integrate over cell volume
@@ -136,8 +138,8 @@ auto problem_main() -> int
 	}
 
 	// multigrid solution residual tolerances
-	const amrex::Real reltol = 1.0e-12; // doesn't work below ~1e-13...
-	const amrex::Real abstol = 0;	    // unused if zero
+	const Real reltol = 1.0e-12; // doesn't work below ~1e-13...
+	const Real abstol = 0;	     // unused if zero
 
 	/// begin free-space solver
 
@@ -145,7 +147,7 @@ auto problem_main() -> int
 
 	poissoneq.setLevelBC(0,
 			     &phi); // set Dirichlet boundary conditions using ghost cells of 'phi'
-	amrex::Real residual_linf = mlmg.solve(phi_levels, rhs_levels, reltol, abstol); // solve
+	Real residual_linf = mlmg.solve(phi_levels, rhs_levels, reltol, abstol); // solve
 
 	amrex::Print() << "Residual max norm = " << residual_linf << "\n\n";
 
@@ -186,45 +188,42 @@ auto problem_main() -> int
 		auto prob_lo = geom.ProbLoArray();
 		auto lo = facebox.loVect3d();
 		auto hi = facebox.hiVect3d();
-		amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> face_lo = {
+		amrex::GpuArray<Real, AMREX_SPACEDIM> face_lo = {
 		    AMREX_D_DECL(lo[0] * dx[0], lo[1] * dx[1], lo[2] * dx[2])};
 
-		amrex::Real x0 =
-		    face_lo[0] + amrex::Real(0.5) * dx[0] * (hi[0] - lo[0] + amrex::Real(1));
-		amrex::Real y0 =
-		    face_lo[1] + amrex::Real(0.5) * dx[1] * (hi[1] - lo[1] + amrex::Real(1));
-		amrex::Real z0 =
-		    face_lo[2] + amrex::Real(0.5) * dx[2] * (hi[2] - lo[2] + amrex::Real(1));
+		Real x0 = face_lo[0] + Real(0.5) * dx[0] * (hi[0] - lo[0] + Real(1));
+		Real y0 = face_lo[1] + Real(0.5) * dx[1] * (hi[1] - lo[1] + Real(1));
+		Real z0 = face_lo[2] + Real(0.5) * dx[2] * (hi[2] - lo[2] + Real(1));
 
-		amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> r0 = {AMREX_D_DECL(x0, y0, z0)};
+		amrex::GpuArray<Real, AMREX_SPACEDIM> r0 = {AMREX_D_DECL(x0, y0, z0)};
 		for (int l = 0; l < AMREX_SPACEDIM; ++l) {
 			mp.r0[l] = r0[l];
 		}
 
-		amrex::Loop(
-		    facebox, [=, arr = arr, &mp] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
-			    amrex::Real const x = prob_lo[0] + (i + amrex::Real(0.5)) * dx[0];
-			    amrex::Real const y = prob_lo[1] + (j + amrex::Real(0.5)) * dx[1];
-			    amrex::Real const z = prob_lo[2] + (k + amrex::Real(0.5)) * dx[2];
+		amrex::Loop(facebox,
+			    [=, arr = arr, &mp] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+				    Real const x = prob_lo[0] + (i + Real(0.5)) * dx[0];
+				    Real const y = prob_lo[1] + (j + Real(0.5)) * dx[1];
+				    Real const z = prob_lo[2] + (k + Real(0.5)) * dx[2];
 
-			    amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> r = {
-				AMREX_D_DECL(x - x0, y - y0, z - z0)};
+				    amrex::GpuArray<Real, AMREX_SPACEDIM> r = {
+					AMREX_D_DECL(x - x0, y - y0, z - z0)};
 
-			    // monopole
-			    mp.q0 += arr(i, j, k); // monopole
+				    // monopole
+				    mp.q0 += arr(i, j, k); // monopole
 
-			    // dipole
-			    for (int l = 0; l < AMREX_SPACEDIM; ++l) {
-				    mp.q1[l] += arr(i, j, k) * r[l];
-			    }
-
-			    // quadrupole
-			    for (int l = 0; l < AMREX_SPACEDIM; ++l) {
-				    for (int m = 0; m < AMREX_SPACEDIM; ++m) {
-					    mp.q2[l][m] += arr(i, j, k) * r[l] * r[m];
+				    // dipole
+				    for (int l = 0; l < AMREX_SPACEDIM; ++l) {
+					    mp.q1[l] += arr(i, j, k) * r[l];
 				    }
-			    }
-		    });
+
+				    // quadrupole
+				    for (int l = 0; l < AMREX_SPACEDIM; ++l) {
+					    for (int m = 0; m < AMREX_SPACEDIM; ++m) {
+						    mp.q2[l][m] += arr(i, j, k) * r[l] * r[m];
+					    }
+				    }
+			    });
 	}
 
 	// Step 2c. MPI_Allgather multipoles. Now each process has multipoles for all N faceBoxes.
@@ -258,47 +257,46 @@ auto problem_main() -> int
 		// loop over all multipoles
 		for (auto &mp : all_mp) {
 			// multipole expansion is about mp.r0
-			amrex::Real x0 = mp.r0[0];
-			amrex::Real y0 = mp.r0[1];
-			amrex::Real z0 = mp.r0[2];
+			Real x0 = mp.r0[0];
+			Real y0 = mp.r0[1];
+			Real z0 = mp.r0[2];
 
-			amrex::ParallelFor(facebox, [=, arr = arr] AMREX_GPU_DEVICE(
-							int i, int j, int k) noexcept {
-				// compute cell coordinates
-				amrex::Real const x = prob_lo[0] + (i + amrex::Real(0.5)) * dx[0];
-				amrex::Real const y = prob_lo[1] + (j + amrex::Real(0.5)) * dx[1];
-				amrex::Real const z = prob_lo[2] + (k + amrex::Real(0.5)) * dx[2];
-				amrex::Real r = std::sqrt(AMREX_D_TERM((x - x0) * (x - x0),
-								       +(y - y0) * (y - y0),
-								       +(z - z0) * (z - z0)));
+			amrex::ParallelFor(
+			    facebox, [=, arr = arr] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+				    // compute cell coordinates
+				    Real const x = prob_lo[0] + (i + Real(0.5)) * dx[0];
+				    Real const y = prob_lo[1] + (j + Real(0.5)) * dx[1];
+				    Real const z = prob_lo[2] + (k + Real(0.5)) * dx[2];
+				    Real r = std::sqrt(AMREX_D_TERM((x - x0) * (x - x0),
+								    +(y - y0) * (y - y0),
+								    +(z - z0) * (z - z0)));
 
-				// evaluate DGF convolved with each multipole term
-				// (N.B. Burkhart [1997] gives an asymptotic expansion of the
-				// DGF in (1/r)^n, up to n=5.)
-				amrex::Real const u = x / r;
-				amrex::Real const v = y / r;
-				amrex::Real const w = z / r;
+				    // evaluate DGF convolved with each multipole term
+				    // (N.B. Burkhart [1997] gives an asymptotic expansion of the
+				    // DGF in (1/r)^n, up to n=5.)
+				    Real const u = x / r;
+				    Real const v = y / r;
+				    Real const w = z / r;
 
-				auto U = [=] AMREX_GPU_DEVICE(int i, int j) {
-					amrex::Real Ux = std::pow(dx[0], i) * std::pow(u, j);
-					amrex::Real Uy = std::pow(dx[1], i) * std::pow(v, j);
-					amrex::Real Uz = std::pow(dx[2], i) * std::pow(w, j);
-					return Ux + Uy + Uz;
-				};
+				    auto U = [=] AMREX_GPU_DEVICE(int i, int j) {
+					    Real Ux = std::pow(dx[0], i) * std::pow(u, j);
+					    Real Uy = std::pow(dx[1], i) * std::pow(v, j);
+					    Real Uz = std::pow(dx[2], i) * std::pow(w, j);
+					    return Ux + Uy + Uz;
+				    };
 
-				amrex::Real K = FourPiG;
-				amrex::Real eta3 =
-				    (1. / 8.) * (U(2, 0) - 6 * U(2, 2) + 5 * U(2, 4));
-				amrex::Real V = (dx[0] * dx[1] * dx[2]);
-				amrex::Real dx2 = (dx[0] * dx[0] + dx[1] * dx[1] + dx[2] * dx[2]);
+				    Real K = FourPiG;
+				    Real eta3 = (1. / 8.) * (U(2, 0) - 6 * U(2, 2) + 5 * U(2, 4));
+				    Real V = (dx[0] * dx[1] * dx[2]);
+				    Real dx2 = (dx[0] * dx[0] + dx[1] * dx[1] + dx[2] * dx[2]);
 
-				if (r == 0.) {
-					arr(i, j, k) += K * mp.q0 * (dx2 / V);
-				} else {
-					arr(i, j, k) += K * mp.q0 * (1.0 / r);
-					arr(i, j, k) += K * mp.q0 * (eta3 / (r * r * r));
-				}
-			});
+				    if (r == 0.) {
+					    arr(i, j, k) += K * mp.q0 * (dx2 / V);
+				    } else {
+					    arr(i, j, k) += K * mp.q0 * (1.0 / r);
+					    arr(i, j, k) += K * mp.q0 * (eta3 / (r * r * r));
+				    }
+			    });
 		}
 	}
 	amrex::Print() << std::endl;
@@ -306,7 +304,7 @@ auto problem_main() -> int
 	// Step 4. Solve for the potential with Dirichlet boundary conditions given by
 	// the potential computed in step 3.
 	poissoneq.setLevelBC(0, &phi);
-	amrex::Real final_resid = mlmg.solve(phi_levels, rhs_levels, reltol, abstol);
+	Real final_resid = mlmg.solve(phi_levels, rhs_levels, reltol, abstol);
 	amrex::Print() << "[Final solve] residual max norm = " << final_resid << "\n\n";
 
 	return 0;
